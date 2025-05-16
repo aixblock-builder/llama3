@@ -701,6 +701,10 @@ class MyModel(AIxBlockMLBase):
             bnb_4bit_use_double_quant=True,
         )
 
+        model_demo = None
+        tokenizer_demo = None
+        model_loaded_demo = False
+
         def load_model(model_id):
             global model_demo, tokenizer_demo, model_loaded_demo
             if torch.cuda.is_available() and not model_loaded_demo:
@@ -751,10 +755,14 @@ class MyModel(AIxBlockMLBase):
 
             # Add the current message
             chat_messages.append({"role": "user", "content": str(message)})
-            text = tokenizer_demo.apply_chat_template(
-                chat_messages, tokenize=False, add_generation_prompt=True
-            )
-            model_inputs = tokenizer_demo([text], return_tensors="pt").to(
+            prompt = ""
+            for message in chat_messages:
+                if message["role"] == "user":
+                    prompt += f"User: {message['content']}\n"
+                else:
+                    prompt += f"Assistant: {message['content']}\n"
+
+            model_inputs = tokenizer_demo([prompt], return_tensors="pt").to(
                 model_demo.device
             )
             if model_inputs.input_ids.shape[1] > MAX_INPUT_TOKEN_LENGTH:
@@ -765,16 +773,15 @@ class MyModel(AIxBlockMLBase):
                     f"Trimmed input from conversation as it was longer than {MAX_INPUT_TOKEN_LENGTH} tokens."
                 )
 
-            generated_ids = model_demo.generate(**model_inputs, max_new_tokens=512)
-
-            generated_ids = [
-                output_ids[len(input_ids) :]
-                for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
-            ]
-            response = tokenizer_demo.batch_decode(
-                generated_ids, skip_special_tokens=True
-            )[0]
-            return response
+            outputs = model_demo.generate(**model_inputs, max_new_tokens=512)
+            response = tokenizer_demo.decode(outputs[0], skip_special_tokens=True)
+            lines = response.strip().split("\n")
+            last_message = None
+            for line in reversed(lines):
+                if line.startswith("Assistant:"):
+                    last_message = line.replace("Assistant:", "").strip()
+                    break
+            return last_message
 
         chat_interface = gr.ChatInterface(
             fn=generate,
@@ -807,7 +814,8 @@ class MyModel(AIxBlockMLBase):
 
     @mcp.tool()
     def model_trial(self, project, **kwargs):
-        return {"message": "Done", "result": "Done"}
+        import gradio as gr
+
 
     @mcp.tool()
     def download(self, project, **kwargs):
